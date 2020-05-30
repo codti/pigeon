@@ -21,7 +21,7 @@ func main() {
 	// 程序退出关闭套接字
 	defer listener.Close()
 
-	// 等待接受连接
+	// 等待接收连接
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
