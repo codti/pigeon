@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"io"
 	"log"
 	"net"
 	"os"
@@ -10,8 +12,16 @@ import (
 
 func main() {
 
+	network := "tcp"
+	service := "0.0.0.0:9501"
+	// 设置日志
+	log.SetFlags(log.Ldate | log.Ltime | log.Llongfile)
+
+	// 解析地址
+	addr, _ := net.ResolveTCPAddr(network, service)
+
 	// 创建套接字
-	listener, err := net.Listen("tcp", "0.0.0.0:9501")
+	listener, err := net.ListenTCP(network, addr)
 
 	if err != nil {
 		log.Println("create lesten err", err)
@@ -27,6 +37,7 @@ func main() {
 		if err != nil {
 			log.Println("listener.Accept err", err)
 		}
+
 		go connectHandle(conn)
 	}
 }
@@ -35,59 +46,76 @@ func main() {
 func connectHandle(conn net.Conn) {
 	defer conn.Close()
 	// 定义src来源存储数据容器
-	buff := make([]byte, 10240)
+	buff := make([]byte, 1024)
 
 	n, err := conn.Read(buff)
+
 	// 来源数据读取成功
 	if err == nil {
+		header := strings.Split(string(buff), "\r\n")
+		isConnect := strings.HasPrefix(header[0], "CONNECT")
+
 		// 处理目的相关操作
 		host, port, err := parseHeader(string(buff))
+
 		if err != nil {
 			log.Println(host, port, err)
 		}
-		log.Println(host)
+
 		dstConn, err := net.Dial("tcp", host+":"+port)
 		if err != nil {
 			log.Println(err)
 			return
 		}
+
 		dstConn.SetDeadline(time.Now().Add(2 * time.Second))
-		n, err = dstConn.Write(buff[:n])
-		if err != nil {
-			log.Println(err)
+
+		// 建立CONNECT通道
+		if isConnect {
+			conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
+		} else {
+			n, err = dstConn.Write(buff[:n])
+			if err != nil {
+				log.Println(err)
+			}
 		}
-		throwData(dstConn, conn)
+
+		ExitChan := make(chan bool, 1)
+		go func(sconn net.Conn, dconn net.Conn, Exit chan bool) {
+			_, err := io.Copy(dconn, sconn)
+			if err != nil {
+				fmt.Printf("往%v发送数据失败:%v end\n", host, err)
+			}
+			ExitChan <- true
+		}(conn, dstConn, ExitChan)
+		go func(sconn net.Conn, dconn net.Conn, Exit chan bool) {
+			_, err := io.Copy(sconn, dconn)
+			if err != nil {
+				fmt.Printf("从%v接收数据失败:%v\n", host, err)
+			}
+			ExitChan <- true
+		}(conn, dstConn, ExitChan)
+
+		<-ExitChan
+
+		defer dstConn.Close()
 	} else {
 		log.Println(err)
 	}
 }
 
-// throwData 数据搬运
-func throwData(srcConn, dstConn net.Conn) {
-	// defer srcConn.Close()
-	defer dstConn.Close()
-
-	buff := make([]byte, 1024000)
-
-	for {
-		n, err := srcConn.Read(buff)
-		if err != nil || n == 0 {
-			log.Println(err)
-			break
-		}
-		n, err = dstConn.Write(buff[:n])
-		if err != nil || n == 0 {
-			log.Println(err)
-			break
-		}
-	}
-}
-
 func parseHeader(str string) (string, string, error) {
 	head := strings.Split(str, "\r\n")
-	hostArr := strings.Split(head[1], ":")
-	host := DeletePreAndSufSpace(hostArr[1])
-	port := "80"
+	host, port, err := net.SplitHostPort(strings.Replace(head[1], "Host:", "", -1))
+
+	if err != nil {
+		log.Println("head =", head[1])
+	}
+	host = DeletePreAndSufSpace(host)
+	port = DeletePreAndSufSpace(port)
+	if len(port) == 0 {
+		port = "80"
+	}
 	return host, port, nil
 }
 
