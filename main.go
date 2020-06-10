@@ -6,14 +6,22 @@ import (
 	"log"
 	"net"
 	"os"
+	"pigeon/lib/config"
 	"strings"
 	"time"
+
+	"github.com/spf13/viper"
 )
 
 func main() {
 
-	network := "tcp"
-	service := "0.0.0.0:9501"
+	config.Init()
+	host := viper.GetString("base.host")
+	port := viper.GetString("base.port")
+	network := viper.GetString("base.network")
+	service := fmt.Sprintf("%s:%s", host, port)
+
+	// log.Println(service)
 	// 设置日志
 	log.SetFlags(log.Ldate | log.Ltime | log.Llongfile)
 
@@ -57,7 +65,7 @@ func connectHandle(conn net.Conn) {
 
 		// 处理目的相关操作
 		host, port, err := parseHeader(string(buff))
-
+		log.Println(host)
 		if err != nil {
 			log.Println(host, port, err)
 		}
@@ -68,7 +76,7 @@ func connectHandle(conn net.Conn) {
 			return
 		}
 
-		dstConn.SetDeadline(time.Now().Add(2 * time.Second))
+		dstConn.SetDeadline(time.Now().Add(6 * time.Second))
 
 		// 建立CONNECT通道
 		if isConnect {
@@ -104,42 +112,27 @@ func connectHandle(conn net.Conn) {
 	}
 }
 
+// 获取host 和 port
 func parseHeader(str string) (string, string, error) {
 	head := strings.Split(str, "\r\n")
 	host, port, err := net.SplitHostPort(strings.Replace(head[1], "Host:", "", -1))
 
 	if err != nil {
-		log.Println("head =", head[1])
+		log.Println("head=", head[1], err)
+		// http 初始化
+		addr := strings.Split(strings.Replace(head[1], "Host:", "", -1), ":")
+		host = addr[0]
+		if len(addr) == 1 {
+			port = "80"
+		} else {
+			port = addr[1]
+		}
 	}
-	host = DeletePreAndSufSpace(host)
-	port = DeletePreAndSufSpace(port)
+	host = strings.TrimSpace(host)
+	port = strings.TrimSpace(port)
 	if len(port) == 0 {
 		port = "80"
 	}
+	log.Println("host=", host, ";port=", port)
 	return host, port, nil
-}
-
-// DeletePreAndSufSpace 去除空格
-func DeletePreAndSufSpace(str string) string {
-	strList := []byte(str)
-	spaceCount, count := 0, len(strList)
-	for i := 0; i <= len(strList)-1; i++ {
-		if strList[i] == 32 {
-			spaceCount++
-		} else {
-			break
-		}
-	}
-
-	strList = strList[spaceCount:]
-	spaceCount, count = 0, len(strList)
-	for i := count - 1; i >= 0; i-- {
-		if strList[i] == 32 {
-			spaceCount++
-		} else {
-			break
-		}
-	}
-
-	return string(strList[:count-spaceCount])
 }
